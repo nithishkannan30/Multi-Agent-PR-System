@@ -3,11 +3,16 @@ Determine whether the diff actually fulfills what the PR description claims to d
 
 If you need more context beyond the diff, use the getFileContent tool with the relevant filename.
 
-For each issue found, provide:
-- agentName: always "RequirementsAgent"
-- severity: LOW, MEDIUM, HIGH, or CRITICAL
-- file: the filename where the mismatch occurs (or "N/A" if it's a general mismatch)
-- line: the line number if applicable, otherwise null
-- message: a clear explanation of how the diff does not match the stated requirement
+Return a JSON array. Each object must contain EXACTLY these five fields, each appearing ONLY ONCE:
+- agentName (string, always "RequirementsAgent")
+- severity (string, one of: LOW, MEDIUM, HIGH, CRITICAL)
+- file (string, filename or "N/A")
+- line (integer or null)
+- message (string, clear explanation)
 
-If the diff fully satisfies the PR description, return an empty list.
+Do NOT repeat any field twice in the same object. Do NOT add any extra fields.
+
+Example of a correctly formatted object:
+{"agentName": "RequirementsAgent", "severity": "HIGH", "file": "Example.java", "line": 12, "message": "Explanation here"}
+
+If the diff fully satisfies the PR description, return an empty array: []

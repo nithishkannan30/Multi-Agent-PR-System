@@ -4,6 +4,9 @@ import com.example.MultiAgentsForPR.agents.requirements.RequirementsAgentService
 import com.example.MultiAgentsForPR.agents.security.SecurityAgentService;
 import com.example.MultiAgentsForPR.agents.style.StyleAgentService;
 import com.example.MultiAgentsForPR.model.*;
+import com.example.MultiAgentsForPR.persistence.PrReviewEntity;
+import com.example.MultiAgentsForPR.persistence.PrReviewRepository;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
@@ -16,18 +19,23 @@ public class CoordinatorService {
     private final StyleAgentService styleAgentService;
     private final SecurityAgentService securityAgentService;
     private final RequirementsAgentService requirementsAgentService;
+    private final PrReviewRepository prReviewRepository;
+    private final ObjectMapper objectMapper;
 
     public CoordinatorService(StyleAgentService styleAgentService,
                               SecurityAgentService securityAgentService,
-                              RequirementsAgentService requirementsAgentService) {
+                              RequirementsAgentService requirementsAgentService,
+                              PrReviewRepository prReviewRepository,
+                              ObjectMapper objectMapper) {
         this.styleAgentService = styleAgentService;
         this.securityAgentService = securityAgentService;
         this.requirementsAgentService = requirementsAgentService;
+        this.prReviewRepository = prReviewRepository;
+        this.objectMapper = objectMapper;
     }
 
     public PrReviewResult review(String diff, String prDescription) {
 
-        // Run all three agents concurrently instead of one after another
         CompletableFuture<List<ReviewFinding>> styleFuture =
                 CompletableFuture.supplyAsync(() -> styleAgentService.reviewDiff(diff));
 
@@ -37,7 +45,6 @@ public class CoordinatorService {
         CompletableFuture<List<ReviewFinding>> requirementsFuture =
                 CompletableFuture.supplyAsync(() -> requirementsAgentService.review(diff, prDescription));
 
-        // Wait for all three to finish
         CompletableFuture.allOf(styleFuture, securityFuture, requirementsFuture).join();
 
         List<ReviewFinding> allFindings = new java.util.ArrayList<>();
@@ -47,6 +54,16 @@ public class CoordinatorService {
 
         Verdict verdict = decideVerdict(allFindings);
         String summary = buildSummary(allFindings, verdict);
+
+        // Persist the review run
+        try {
+            String findingsJson = objectMapper.writeValueAsString(allFindings);
+            PrReviewEntity entity = new PrReviewEntity(diff, prDescription, verdict.name(), findingsJson, summary);
+            prReviewRepository.save(entity);
+        } catch (Exception e) {
+            // Don't let a persistence failure break the actual review response
+            System.err.println("Failed to save review: " + e.getMessage());
+        }
 
         return new PrReviewResult(verdict, allFindings, summary);
     }
