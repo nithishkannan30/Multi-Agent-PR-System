@@ -7,6 +7,8 @@ import com.example.MultiAgentsForPR.model.*;
 import com.example.MultiAgentsForPR.persistence.PrReviewEntity;
 import com.example.MultiAgentsForPR.persistence.PrReviewRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
@@ -21,6 +23,8 @@ public class CoordinatorService {
     private final RequirementsAgentService requirementsAgentService;
     private final PrReviewRepository prReviewRepository;
     private final ObjectMapper objectMapper;
+    private static final Logger log = LoggerFactory.getLogger(CoordinatorService.class);
+
 
     public CoordinatorService(StyleAgentService styleAgentService,
                               SecurityAgentService securityAgentService,
@@ -35,6 +39,9 @@ public class CoordinatorService {
     }
 
     public PrReviewResult review(String diff, String prDescription) {
+
+        long startTime = System.currentTimeMillis();
+        log.info("Starting PR review - diff length: {} chars", diff.length());
 
         CompletableFuture<List<ReviewFinding>> styleFuture =
                 CompletableFuture.supplyAsync(() -> styleAgentService.reviewDiff(diff));
@@ -64,6 +71,10 @@ public class CoordinatorService {
             // Don't let a persistence failure break the actual review response
             System.err.println("Failed to save review: " + e.getMessage());
         }
+
+        long duration = System.currentTimeMillis() - startTime;
+        log.info("PR review completed in {}ms - verdict: {}, total findings: {}",
+                duration, verdict, allFindings.size());
 
         return new PrReviewResult(verdict, allFindings, summary);
     }

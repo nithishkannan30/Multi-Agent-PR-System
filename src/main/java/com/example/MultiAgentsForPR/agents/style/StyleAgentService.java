@@ -4,10 +4,14 @@ import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.core.io.Resource;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.retry.annotation.Backoff;
+import org.springframework.retry.annotation.Recover;
+import org.springframework.retry.annotation.Retryable;
 import org.springframework.stereotype.Service;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.util.Collections;
 import java.util.List;
 
 @Service
@@ -22,11 +26,23 @@ public class StyleAgentService {
         this.systemPrompt = promptResource.getContentAsString(StandardCharsets.UTF_8);
     }
 
+    @Retryable(
+            retryFor = Exception.class,
+            maxAttempts = 3,
+            backoff = @Backoff(delay = 1000, multiplier = 2)
+    )
     public List<ReviewFinding> reviewDiff(String diff) {
         return chatClient.prompt()
                 .system(systemPrompt)
                 .user(u -> u.text("{diff}").param("diff", diff))
                 .call()
                 .entity(new ParameterizedTypeReference<List<ReviewFinding>>() {});
+    }
+
+
+    @Recover
+    public List<ReviewFinding> recover(Exception e, String diff) {
+        System.err.println("StyleAgent failed after retries: " + e.getMessage());
+        return Collections.emptyList();
     }
 }
