@@ -22,6 +22,6 @@ public class CoordinatorController {
     @Operation(summary = "Review a diff with all agents", description = "Runs Style, Security, and Requirements agents in parallel and returns a combined verdict")
     @PostMapping("/agents/coordinate/review")
     public PrReviewResult review(@RequestBody CoordinatorReviewRequest request) {
-        return coordinatorService.review(request.diff(), request.prDescription());
+        return coordinatorService.review(request.diff(), request.prDescription(), request.owner(), request.repo());
     }
 }

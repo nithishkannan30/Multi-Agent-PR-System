@@ -20,6 +20,11 @@ public class RequirementsAgentController {
 
     @PostMapping("/agents/requirements/review")
     public List<ReviewFinding> review(@RequestBody RequirementsReviewRequest request) {
-        return requirementsAgentService.review(request.diff(), request.prDescription());
+        return requirementsAgentService.review(
+                request.diff(),
+                request.prDescription(),
+                request.owner(),
+                request.repo()
+        );
     }
 }

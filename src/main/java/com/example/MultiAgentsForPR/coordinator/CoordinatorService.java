@@ -38,8 +38,7 @@ public class CoordinatorService {
         this.objectMapper = objectMapper;
     }
 
-    public PrReviewResult review(String diff, String prDescription) {
-
+    public PrReviewResult review(String diff, String prDescription, String owner, String repo) {
         long startTime = System.currentTimeMillis();
         log.info("Starting PR review - diff length: {} chars", diff.length());
 
@@ -50,7 +49,7 @@ public class CoordinatorService {
                 CompletableFuture.supplyAsync(() -> securityAgentService.reviewDiff(diff));
 
         CompletableFuture<List<ReviewFinding>> requirementsFuture =
-                CompletableFuture.supplyAsync(() -> requirementsAgentService.review(diff, prDescription));
+                CompletableFuture.supplyAsync(() -> requirementsAgentService.review(diff, prDescription, owner, repo));
 
         CompletableFuture.allOf(styleFuture, securityFuture, requirementsFuture).join();
 
@@ -62,13 +61,11 @@ public class CoordinatorService {
         Verdict verdict = decideVerdict(allFindings);
         String summary = buildSummary(allFindings, verdict);
 
-        // Persist the review run
         try {
             String findingsJson = objectMapper.writeValueAsString(allFindings);
             PrReviewEntity entity = new PrReviewEntity(diff, prDescription, verdict.name(), findingsJson, summary);
             prReviewRepository.save(entity);
         } catch (Exception e) {
-            // Don't let a persistence failure break the actual review response
             System.err.println("Failed to save review: " + e.getMessage());
         }
 

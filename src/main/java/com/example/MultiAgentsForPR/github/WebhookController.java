@@ -2,6 +2,7 @@ package com.example.MultiAgentsForPR.github;
 
 import com.example.MultiAgentsForPR.coordinator.CoordinatorService;
 import com.example.MultiAgentsForPR.model.PrReviewResult;
+import com.example.MultiAgentsForPR.rag.RepoIndexingService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -12,6 +13,7 @@ import org.springframework.web.bind.annotation.RestController;
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 import java.nio.charset.StandardCharsets;
+import java.util.List;
 
 @RestController
 public class WebhookController {
@@ -21,13 +23,19 @@ public class WebhookController {
     private final ObjectMapper objectMapper;
     private final String webhookSecret;
 
+    // Add this field + constructor param:
+    private final RepoIndexingService repoIndexingService;
+
+    // In constructor, add:
     public WebhookController(CoordinatorService coordinatorService,
                              GitHubApiClient gitHubApiClient,
                              ObjectMapper objectMapper,
+                             RepoIndexingService repoIndexingService,
                              @Value("${github.webhook.secret}") String webhookSecret) {
         this.coordinatorService = coordinatorService;
         this.gitHubApiClient = gitHubApiClient;
         this.objectMapper = objectMapper;
+        this.repoIndexingService = repoIndexingService;
         this.webhookSecret = webhookSecret;
     }
 
@@ -40,8 +48,13 @@ public class WebhookController {
             return "Invalid signature";
         }
 
+        if ("push".equals(eventType)) {
+            handlePushEvent(rawBody);
+            return "Push processed - incremental index updated";
+        }
+
         if (!"pull_request".equals(eventType)) {
-            return "Ignored - not a pull_request event";
+            return "Ignored - event was " + eventType;
         }
 
         WebhookPayload payload = objectMapper.readValue(rawBody, WebhookPayload.class);
@@ -55,14 +68,35 @@ public class WebhookController {
         int prNumber = payload.pull_request().number();
         String prDescription = payload.pull_request().body() != null ? payload.pull_request().body() : "";
 
-        String diff = gitHubApiClient.getPrDiff(owner, repo, prNumber);
+        repoIndexingService.indexRepoIfNeeded(owner, repo);
 
-        PrReviewResult result = coordinatorService.review(diff, prDescription);
+        String diff = gitHubApiClient.getPrDiff(owner, repo, prNumber);
+        PrReviewResult result = coordinatorService.review(diff, prDescription, owner, repo);
 
         String comment = formatComment(result);
         gitHubApiClient.postComment(owner, repo, prNumber, comment);
 
         return "Review posted successfully";
+    }
+
+    private void handlePushEvent(String rawBody) throws Exception {
+        var payload = objectMapper.readValue(rawBody, java.util.Map.class);
+        var repository = (java.util.Map<String, Object>) payload.get("repository");
+        String repo = (String) repository.get("name");
+        var owner = (String) ((java.util.Map<String, Object>) repository.get("owner")).get("name");
+
+        var commits = (java.util.List<java.util.Map<String, Object>>) payload.get("commits");
+        if (commits == null) return;
+
+        for (var commit : commits) {
+            List<String> added = (List<String>) commit.get("added");
+            List<String> modified = (List<String>) commit.get("modified");
+            List<String> removed = (List<String>) commit.get("removed");
+
+            if (added != null) added.forEach(f -> repoIndexingService.indexFile(owner, repo, f));
+            if (modified != null) modified.forEach(f -> repoIndexingService.indexFile(owner, repo, f));
+            if (removed != null) removed.forEach(f -> repoIndexingService.removeFile(owner, repo, f));
+        }
     }
 
     private boolean isSignatureValid(String payload, String signatureHeader) throws Exception {
