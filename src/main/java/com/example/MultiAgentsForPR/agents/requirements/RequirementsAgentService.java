@@ -5,6 +5,8 @@ import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.core.io.Resource;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.retry.annotation.Backoff;
+import org.springframework.retry.annotation.Retryable;
 import org.springframework.stereotype.Service;
 
 import java.io.IOException;
@@ -26,6 +28,11 @@ public class RequirementsAgentService {
         this.fileContextTool = fileContextTool;
     }
 
+    @Retryable(
+            retryFor = Exception.class,
+            maxAttempts = 3,
+            backoff = @Backoff(delay = 1000, multiplier = 2)
+    )
     public List<ReviewFinding> review(String diff, String prDescription) {
         String combinedInput = "PR Description: {prDescription}\n\nDiff:\n{diff}";
 
