@@ -9,33 +9,42 @@ import com.example.MultiAgentsForPR.persistence.PrReviewRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
 
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Executor;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 @Service
 public class CoordinatorService {
+
+    private static final Logger log = LoggerFactory.getLogger(CoordinatorService.class);
+    private static final long AGENT_TIMEOUT_SECONDS = 20;
 
     private final StyleAgentService styleAgentService;
     private final SecurityAgentService securityAgentService;
     private final RequirementsAgentService requirementsAgentService;
     private final PrReviewRepository prReviewRepository;
     private final ObjectMapper objectMapper;
-    private static final Logger log = LoggerFactory.getLogger(CoordinatorService.class);
-
+    private final Executor aiTaskExecutor;
 
     public CoordinatorService(StyleAgentService styleAgentService,
                               SecurityAgentService securityAgentService,
                               RequirementsAgentService requirementsAgentService,
                               PrReviewRepository prReviewRepository,
-                              ObjectMapper objectMapper) {
+                              ObjectMapper objectMapper,
+                              @Qualifier("aiTaskExecutor") Executor aiTaskExecutor) {
         this.styleAgentService = styleAgentService;
         this.securityAgentService = securityAgentService;
         this.requirementsAgentService = requirementsAgentService;
         this.prReviewRepository = prReviewRepository;
         this.objectMapper = objectMapper;
+        this.aiTaskExecutor = aiTaskExecutor;
     }
 
     public PrReviewResult review(String diff, String prDescription, String owner, String repo) {
@@ -43,17 +52,17 @@ public class CoordinatorService {
         log.info("Starting PR review - diff length: {} chars", diff.length());
 
         CompletableFuture<List<ReviewFinding>> styleFuture =
-                CompletableFuture.supplyAsync(() -> styleAgentService.reviewDiff(diff));
+                withTimeout(CompletableFuture.supplyAsync(() -> styleAgentService.reviewDiff(diff), aiTaskExecutor), "StyleAgent");
 
         CompletableFuture<List<ReviewFinding>> securityFuture =
-                CompletableFuture.supplyAsync(() -> securityAgentService.reviewDiff(diff));
+                withTimeout(CompletableFuture.supplyAsync(() -> securityAgentService.reviewDiff(diff), aiTaskExecutor), "SecurityAgent");
 
         CompletableFuture<List<ReviewFinding>> requirementsFuture =
-                CompletableFuture.supplyAsync(() -> requirementsAgentService.review(diff, prDescription, owner, repo));
+                withTimeout(CompletableFuture.supplyAsync(() -> requirementsAgentService.review(diff, prDescription, owner, repo), aiTaskExecutor), "RequirementsAgent");
 
         CompletableFuture.allOf(styleFuture, securityFuture, requirementsFuture).join();
 
-        List<ReviewFinding> allFindings = new java.util.ArrayList<>();
+        List<ReviewFinding> allFindings = new ArrayList<>();
         allFindings.addAll(styleFuture.join());
         allFindings.addAll(securityFuture.join());
         allFindings.addAll(requirementsFuture.join());
@@ -74,6 +83,21 @@ public class CoordinatorService {
                 duration, verdict, allFindings.size());
 
         return new PrReviewResult(verdict, allFindings, summary);
+    }
+
+    /**
+     * Wraps a future with a timeout. If the agent doesn't respond in time,
+     * logs it and degrades gracefully to an empty list instead of blocking
+     * the whole review indefinitely.
+     */
+    private CompletableFuture<List<ReviewFinding>> withTimeout(CompletableFuture<List<ReviewFinding>> future, String agentName) {
+        return future
+                .orTimeout(AGENT_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+                .exceptionally(ex -> {
+                    log.warn("{} did not complete within {}s - returning empty result. Cause: {}",
+                            agentName, AGENT_TIMEOUT_SECONDS, ex.getMessage());
+                    return Collections.emptyList();
+                });
     }
 
     private Verdict decideVerdict(List<ReviewFinding> findings) {
