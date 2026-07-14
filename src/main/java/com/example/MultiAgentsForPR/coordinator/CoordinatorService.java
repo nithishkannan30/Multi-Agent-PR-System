@@ -6,6 +6,7 @@ import com.example.MultiAgentsForPR.agents.style.StyleAgentService;
 import com.example.MultiAgentsForPR.model.*;
 import com.example.MultiAgentsForPR.persistence.PrReviewEntity;
 import com.example.MultiAgentsForPR.persistence.PrReviewRepository;
+import com.example.MultiAgentsForPR.persistence.ReviewFindingEntity;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -47,7 +48,7 @@ public class CoordinatorService {
         this.aiTaskExecutor = aiTaskExecutor;
     }
 
-    public PrReviewResult review(String diff, String prDescription, String owner, String repo) {
+    public PrReviewResult review(String diff, String prDescription, String owner, String repo, PrReviewMetadata metadata) {
         long startTime = System.currentTimeMillis();
         log.info("Starting PR review - diff length: {} chars", diff.length());
 
@@ -70,15 +71,33 @@ public class CoordinatorService {
         Verdict verdict = decideVerdict(allFindings);
         String summary = buildSummary(allFindings, verdict);
 
+        long duration = System.currentTimeMillis() - startTime;
+
         try {
-            String findingsJson = objectMapper.writeValueAsString(allFindings);
-            PrReviewEntity entity = new PrReviewEntity(diff, prDescription, verdict.name(), findingsJson, summary);
+            PrReviewEntity entity = new PrReviewEntity();
+            entity.setOwner(owner);
+            entity.setRepo(repo);
+            entity.setPrNumber(metadata.prNumber());
+            entity.setCommitSha(metadata.commitSha());
+            entity.setBranch(metadata.branch());
+            entity.setAuthor(metadata.author());
+            entity.setPrDescription(prDescription);
+            entity.setDiffUrl(metadata.diffUrl());
+            entity.setVerdict(verdict.name());
+            entity.setSummary(summary);
+            entity.setDurationMs(duration);
+            entity.setCreatedAt(java.time.LocalDateTime.now());
+
+            List<ReviewFindingEntity> findingEntities = allFindings.stream()
+                    .map(f -> new ReviewFindingEntity(f.agentName(), f.severity(), f.file(), f.line(), f.message()))
+                    .collect(Collectors.toList());
+            entity.setFindings(findingEntities);
+
             prReviewRepository.save(entity);
         } catch (Exception e) {
             System.err.println("Failed to save review: " + e.getMessage());
         }
 
-        long duration = System.currentTimeMillis() - startTime;
         log.info("PR review completed in {}ms - verdict: {}, total findings: {}",
                 duration, verdict, allFindings.size());
 

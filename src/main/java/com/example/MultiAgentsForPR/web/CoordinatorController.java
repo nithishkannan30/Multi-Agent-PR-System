@@ -2,6 +2,7 @@ package com.example.MultiAgentsForPR.web;
 
 import com.example.MultiAgentsForPR.coordinator.CoordinatorService;
 import com.example.MultiAgentsForPR.model.CoordinatorReviewRequest;
+import com.example.MultiAgentsForPR.model.PrReviewMetadata;
 import com.example.MultiAgentsForPR.model.PrReviewResult;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -22,6 +23,9 @@ public class CoordinatorController {
     @Operation(summary = "Review a diff with all agents", description = "Runs Style, Security, and Requirements agents in parallel and returns a combined verdict")
     @PostMapping("/agents/coordinate/review")
     public PrReviewResult review(@RequestBody CoordinatorReviewRequest request) {
-        return coordinatorService.review(request.diff(), request.prDescription(), request.owner(), request.repo());
+        PrReviewMetadata metadata = new PrReviewMetadata(
+                request.prNumber(), request.commitSha(), request.branch(), request.author(), request.diffUrl()
+        );
+        return coordinatorService.review(request.diff(), request.prDescription(), request.owner(), request.repo(), metadata);
     }
 }

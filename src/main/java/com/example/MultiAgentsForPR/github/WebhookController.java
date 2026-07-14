@@ -71,7 +71,16 @@ public class WebhookController {
         repoIndexingService.indexRepoIfNeeded(owner, repo);
 
         String diff = gitHubApiClient.getPrDiff(owner, repo, prNumber);
-        PrReviewResult result = coordinatorService.review(diff, prDescription, owner, repo);
+
+        com.example.MultiAgentsForPR.model.PrReviewMetadata metadata = new com.example.MultiAgentsForPR.model.PrReviewMetadata(
+                prNumber,
+                payload.pull_request().head().sha(),
+                payload.pull_request().head().ref(),
+                payload.pull_request().user().login(),
+                payload.pull_request().diff_url()
+        );
+
+        PrReviewResult result = coordinatorService.review(diff, prDescription, owner, repo, metadata);
 
         String comment = formatComment(result);
         gitHubApiClient.postComment(owner, repo, prNumber, comment);

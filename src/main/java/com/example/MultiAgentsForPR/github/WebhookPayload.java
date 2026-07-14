@@ -12,8 +12,17 @@ public record WebhookPayload(
     public record PullRequest(
             int number,
             String title,
-            String body
-    ) {}
+            String body,
+            String diff_url,
+            Head head,
+            User user
+    ) {
+        @JsonIgnoreProperties(ignoreUnknown = true)
+        public record Head(String sha, String ref) {}
+
+        @JsonIgnoreProperties(ignoreUnknown = true)
+        public record User(String login) {}
+    }
 
     @JsonIgnoreProperties(ignoreUnknown = true)
     public record Repository(
