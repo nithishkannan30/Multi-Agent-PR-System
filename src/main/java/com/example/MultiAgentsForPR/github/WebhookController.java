@@ -27,25 +27,36 @@ public class WebhookController {
     private final RepoIndexingService repoIndexingService;
 
     // In constructor, add:
+    private final WebhookIdempotencyService idempotencyService;
+
+    // Add to constructor:
     public WebhookController(CoordinatorService coordinatorService,
                              GitHubApiClient gitHubApiClient,
                              ObjectMapper objectMapper,
                              RepoIndexingService repoIndexingService,
+                             WebhookIdempotencyService idempotencyService,
                              @Value("${github.webhook.secret}") String webhookSecret) {
         this.coordinatorService = coordinatorService;
         this.gitHubApiClient = gitHubApiClient;
         this.objectMapper = objectMapper;
         this.repoIndexingService = repoIndexingService;
+        this.idempotencyService = idempotencyService;
         this.webhookSecret = webhookSecret;
     }
 
     @PostMapping("/webhooks/github")
     public String handleWebhook(@RequestBody String rawBody,
                                 @RequestHeader("X-Hub-Signature-256") String signature,
-                                @RequestHeader("X-GitHub-Event") String eventType) throws Exception {
+                                @RequestHeader("X-GitHub-Event") String eventType,
+                                @RequestHeader(value = "X-GitHub-Delivery", required = false) String deliveryId) throws Exception {
 
         if (!isSignatureValid(rawBody, signature)) {
             return "Invalid signature";
+        }
+
+        if (!idempotencyService.tryClaim(deliveryId)) {
+            System.out.println("[IDEMPOTENCY] Duplicate delivery ignored: " + deliveryId);
+            return "Duplicate delivery - already processed";
         }
 
         if ("push".equals(eventType)) {
