@@ -3,6 +3,7 @@ package com.example.MultiAgentsForPR.coordinator;
 import com.example.MultiAgentsForPR.agents.requirements.RequirementsAgentService;
 import com.example.MultiAgentsForPR.agents.security.SecurityAgentService;
 import com.example.MultiAgentsForPR.agents.style.StyleAgentService;
+import com.example.MultiAgentsForPR.metrics.ReviewMetrics;
 import com.example.MultiAgentsForPR.model.*;
 import com.example.MultiAgentsForPR.persistence.PrReviewEntity;
 import com.example.MultiAgentsForPR.persistence.PrReviewRepository;
@@ -34,33 +35,41 @@ public class CoordinatorService {
     private final ObjectMapper objectMapper;
     private final Executor aiTaskExecutor;
 
+    // Add field:
+    private final ReviewMetrics metrics;
+
+    // Add to constructor:
     public CoordinatorService(StyleAgentService styleAgentService,
                               SecurityAgentService securityAgentService,
                               RequirementsAgentService requirementsAgentService,
                               PrReviewRepository prReviewRepository,
                               ObjectMapper objectMapper,
-                              @Qualifier("aiTaskExecutor") Executor aiTaskExecutor) {
+                              @Qualifier("aiTaskExecutor") Executor aiTaskExecutor,
+                              ReviewMetrics metrics) {
         this.styleAgentService = styleAgentService;
         this.securityAgentService = securityAgentService;
         this.requirementsAgentService = requirementsAgentService;
         this.prReviewRepository = prReviewRepository;
         this.objectMapper = objectMapper;
         this.aiTaskExecutor = aiTaskExecutor;
+        this.metrics = metrics;
     }
 
     public PrReviewResult review(String diff, String prDescription, String owner, String repo, PrReviewMetadata metadata) {
         long startTime = System.currentTimeMillis();
         log.info("Starting PR review - diff length: {} chars", diff.length());
 
-        CompletableFuture<List<ReviewFinding>> styleFuture =
-                withTimeout(CompletableFuture.supplyAsync(() -> styleAgentService.reviewDiff(diff), aiTaskExecutor), "StyleAgent");
+        CompletableFuture<List<ReviewFinding>> styleFuture = withTimeout(
+                timed("StyleAgent", CompletableFuture.supplyAsync(() -> styleAgentService.reviewDiff(diff), aiTaskExecutor)),
+                "StyleAgent");
 
-        CompletableFuture<List<ReviewFinding>> securityFuture =
-                withTimeout(CompletableFuture.supplyAsync(() -> securityAgentService.reviewDiff(diff), aiTaskExecutor), "SecurityAgent");
+        CompletableFuture<List<ReviewFinding>> securityFuture = withTimeout(
+                timed("SecurityAgent", CompletableFuture.supplyAsync(() -> securityAgentService.reviewDiff(diff), aiTaskExecutor)),
+                "SecurityAgent");
 
-        CompletableFuture<List<ReviewFinding>> requirementsFuture =
-                withTimeout(CompletableFuture.supplyAsync(() -> requirementsAgentService.review(diff, prDescription, owner, repo), aiTaskExecutor), "RequirementsAgent");
-
+        CompletableFuture<List<ReviewFinding>> requirementsFuture = withTimeout(
+                timed("RequirementsAgent", CompletableFuture.supplyAsync(() -> requirementsAgentService.review(diff, prDescription, owner, repo), aiTaskExecutor)),
+                "RequirementsAgent");
         CompletableFuture.allOf(styleFuture, securityFuture, requirementsFuture).join();
 
         List<ReviewFinding> allFindings = new ArrayList<>();
@@ -100,7 +109,8 @@ public class CoordinatorService {
 
         log.info("PR review completed in {}ms - verdict: {}, total findings: {}",
                 duration, verdict, allFindings.size());
-
+        metrics.recordReviewDuration(duration, verdict.name());
+        metrics.incrementReviewsByVerdict(verdict.name());
         return new PrReviewResult(verdict, allFindings, summary);
     }
 
@@ -109,6 +119,16 @@ public class CoordinatorService {
      * logs it and degrades gracefully to an empty list instead of blocking
      * the whole review indefinitely.
      */
+    private CompletableFuture<List<ReviewFinding>> timed(String agentName, CompletableFuture<List<ReviewFinding>> future) {
+        long start = System.currentTimeMillis();
+        return future.whenComplete((result, ex) -> {
+            metrics.recordAgentDuration(agentName, System.currentTimeMillis() - start);
+            if (ex != null) {
+                metrics.incrementAgentFailure(agentName);
+            }
+        });
+    }
+
     private CompletableFuture<List<ReviewFinding>> withTimeout(CompletableFuture<List<ReviewFinding>> future, String agentName) {
         return future
                 .orTimeout(AGENT_TIMEOUT_SECONDS, TimeUnit.SECONDS)

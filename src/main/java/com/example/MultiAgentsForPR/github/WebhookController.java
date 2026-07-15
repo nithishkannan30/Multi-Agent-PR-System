@@ -1,6 +1,7 @@
 package com.example.MultiAgentsForPR.github;
 
 import com.example.MultiAgentsForPR.coordinator.CoordinatorService;
+import com.example.MultiAgentsForPR.metrics.ReviewMetrics;
 import com.example.MultiAgentsForPR.model.PrReviewResult;
 import com.example.MultiAgentsForPR.rag.RepoIndexingService;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -30,18 +31,22 @@ public class WebhookController {
     private final WebhookIdempotencyService idempotencyService;
 
     // Add to constructor:
+    private final ReviewMetrics metrics;
+
     public WebhookController(CoordinatorService coordinatorService,
                              GitHubApiClient gitHubApiClient,
                              ObjectMapper objectMapper,
                              RepoIndexingService repoIndexingService,
                              WebhookIdempotencyService idempotencyService,
-                             @Value("${github.webhook.secret}") String webhookSecret) {
+                             @Value("${github.webhook.secret}") String webhookSecret,
+                             ReviewMetrics metrics) {
         this.coordinatorService = coordinatorService;
         this.gitHubApiClient = gitHubApiClient;
         this.objectMapper = objectMapper;
         this.repoIndexingService = repoIndexingService;
         this.idempotencyService = idempotencyService;
         this.webhookSecret = webhookSecret;
+        this.metrics=metrics;
     }
 
     @PostMapping("/webhooks/github")
